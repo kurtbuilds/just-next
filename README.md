@@ -2,29 +2,20 @@
 
 A modern reimplementation of [just](https://github.com/casey/just), the command runner. `just-next` keeps the core simplicity of `just` while fixing long-standing ergonomic issues and adding automatic environment setup.
 
+# Installation
+
+  cargo install --git https://github.com/kurtbuilds/just-next.git
+
 ## Why?
 
-`just` is excellent, but after 10 years it has accumulated some warts:
-
-1. **Foreign syntax** - Export statements and variable assignments use `:=` and string concatenation instead of familiar bash syntax
-2. **No state between lines** - Each recipe line runs in a separate shell, breaking variable assignments and `shift`
-3. **Manual environment setup** - You must manually add `node_modules/.bin`, activate virtualenvs, etc.
-4. **Quoting issues** - Variadic arguments don't preserve quoting, requiring shebang workarounds
-
-`just-next` fixes all of these while maintaining backwards compatibility - it automatically detects legacy justfiles and delegates to the original `just` binary.
-
-## Installation
-
-```bash
-cargo install --path .
-```
+`just` radically simplified writing commands for projects in any language, but it is nearly 10 years old and stuck with some early decisions. `just-next` simplifies the syntax of `just`, solves common gotchas, and intelligently handles environment setup.
 
 ## Syntax Comparison
 
 ### Export Statements
 
 <table>
-<tr><th>Original just</th><th>just-next</th></tr>
+<tr><th>just</th><th>just-next</th></tr>
 <tr>
 <td>
 
@@ -48,7 +39,7 @@ export FOO="bar"
 ### Variable Assignments in Recipes
 
 <table>
-<tr><th>Original just</th><th>just-next</th></tr>
+<tr><th>just</th><th>just-next</th></tr>
 <tr>
 <td>
 
@@ -68,16 +59,17 @@ build:
     FOO=$(echo bar)
     echo $FOO
 ```
-Variables persist across lines automatically.
+
+`just-next` has a notion of environment. Each line is its own shell, but that environment concept persists across lines.
 
 </td>
 </tr>
 </table>
 
-### Using `shift` with Variadic Arguments
+### Quoting variables
 
 <table>
-<tr><th>Original just</th><th>just-next</th></tr>
+<tr><th>just</th><th>just-next</th></tr>
 <tr>
 <td>
 
@@ -87,43 +79,18 @@ run NAME *ARGS:
     shift
     ./program "$NAME" "$@"
 ```
-Requires shebang because `shift` doesn't work across lines.
+`just` treats every argument as a single string, so quoted lists simply do not
+work. [The issue](https://github.com/casey/just/issues/208) unfortunately has
+been open since 2017.
 
 </td>
 <td>
 
 ```just
 run NAME *ARGS:
-    shift
-    ./program "$NAME" "$@"
+    ./program $NAME $ARGS
 ```
-`shift` works naturally, modifying `$@` for subsequent lines.
-
-</td>
-</tr>
-</table>
-
-### Proper Argument Quoting
-
-<table>
-<tr><th>Original just</th><th>just-next</th></tr>
-<tr>
-<td>
-
-```just
-test *ARGS:
-    cargo test {{ARGS}}
-```
-Arguments with spaces are not properly quoted. `ARGS` is just a string.
-
-</td>
-<td>
-
-```just
-test *ARGS:
-    cargo test "$@"
-```
-Use standard `$@` with proper quoting semantics.
+`just-next` automatically quotes all arguments, and handles argument lists correctly.
 
 </td>
 </tr>
@@ -132,7 +99,7 @@ Use standard `$@` with proper quoting semantics.
 ### Export Within Recipes
 
 <table>
-<tr><th>Original just</th><th>just-next</th></tr>
+<tr><th>just</th><th>just-next</th></tr>
 <tr>
 <td>
 
@@ -172,17 +139,18 @@ Exports persist to subsequent commands.
 All of these happen without any configuration. You can customize with settings:
 
 ```just
-set venv = "my-custom-venv"
+set venv = "path/to/venv/"
 set dotenv = ".env.production"
 ```
+
+`just-next` maintains full backwards compatibility—it automatically detects legacy justfiles and delegates to the original `just` binary.
 
 ## Settings
 
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `set next` | false | Force next-style parsing (disable legacy detection) |
-| `set dotenv` | true | Load `.env` files |
-| `set dotenv = "path"` | - | Load specific dotenv file |
+| `set dotenv` | ".env" | Load `.env` files. Set to false to disable |
 | `set export` | true | Export all variables to environment |
 | `set positional-arguments` | true | Enable `$1`, `$2`, `$@` in recipes |
 | `set venv = "path"` | auto | Path to Python virtualenv |
@@ -219,8 +187,6 @@ Options:
   -l, --list                 List available recipes
   -f, --justfile <PATH>      Use specific justfile
   -d, --working-directory    Set working directory
-      --next                 Force next-style parsing
-      --legacy               Force delegation to original just
 ```
 
 ## Example
@@ -236,13 +202,12 @@ migrate:
 
 # Run tests with optional filter
 test *ARGS:
-    shift
-    cargo test "$@"
+    cargo test $ARGS
 
 # Deploy to environment (default: staging)
-deploy ENV="staging":
+deploy ENV=staging:
     echo "Deploying to $ENV"
-    ./scripts/deploy.sh "$ENV"
+    ./scripts/deploy.sh $ENV
 
 # Build with captured output
 build:
@@ -250,19 +215,3 @@ build:
     echo "Build complete"
     echo "$OUTPUT" | tail -5
 ```
-
-## How It Works
-
-Unlike original `just` which runs each line in a separate shell, `just-next` executes recipes line-by-line while tracking state:
-
-1. Each command is printed in bold, then executed
-2. Variable assignments (`FOO=bar` or `FOO=$(cmd)`) are captured and stored
-3. Exports are added to the environment for subsequent commands
-4. `shift` modifies the positional argument list
-5. All state carries forward to the next line
-
-For recipes with shebangs (`#!/bin/bash`), the entire recipe is still executed as a single script.
-
-## License
-
-MIT

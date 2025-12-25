@@ -1,6 +1,6 @@
 set next
 
-export GREETING="Hello"
+GREETING="Hello"
 
 # Build the project
 build:
@@ -33,5 +33,5 @@ test-shift NAME *ARGS:
     echo "After shift: $@"
 
 # Default parameter
-deploy ENV="staging":
+deploy ENV=staging:
     echo "Deploying to $ENV"

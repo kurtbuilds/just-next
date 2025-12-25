@@ -1,7 +1,5 @@
 set next
 
-export GREETING="Hello"
-
 # Build the project
 build:
     cargo build --release
@@ -9,33 +7,3 @@ build:
 # Build the project
 install:
     cargo install --path .
-
-# Run tests
-test:
-    cargo test
-
-# Test variable persistence
-test-vars:
-    FOO=$(echo "bar")
-    echo "FOO is: $FOO"
-    export BAZ="qux"
-    echo "BAZ is: $BAZ"
-
-# Test arguments
-greet NAME:
-    echo "$GREETING, $NAME!"
-
-# Test variadic args
-echo-all *ARGS:
-    echo "Args: $@"
-    echo "Quoted: $1 $2"
-
-# Test shift
-test-shift NAME *ARGS:
-    echo "Before shift: $@"
-    shift
-    echo "After shift: $@"
-
-# Default parameter
-deploy ENV="staging":
-    echo "Deploying to $ENV"
