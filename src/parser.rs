@@ -279,6 +279,12 @@ impl<'a> Parser<'a> {
         while self.pos < self.lines.len() {
             let line = self.lines[self.pos];
 
+            // Completely empty lines continue the body (don't break on blank lines)
+            if line.is_empty() {
+                self.pos += 1;
+                continue;
+            }
+
             // Body lines must be indented (start with whitespace)
             if !line.starts_with(' ') && !line.starts_with('\t') {
                 break;
@@ -438,5 +444,48 @@ build:
         let jf = parse(input).unwrap();
         assert!(jf.settings.next);
         assert_eq!(jf.settings.venv, Some(".venv".to_string()));
+    }
+
+    #[test]
+    fn test_shebang_recipe_with_empty_lines() {
+        // Regression test: empty lines (without indentation) within a shebang recipe
+        // should not cause the parser to exit the recipe body early
+        let input = r#"
+run-linux:
+    #!/usr/bin/env bash
+    set -e
+    mkdir -p target
+
+    # Detect architecture
+    ARCH=$(uname -m)
+    case "$ARCH" in
+        arm64|aarch64) TARGET="aarch64-linux-gnu" ;;
+        x86_64)        TARGET="x86_64-linux-gnu" ;;
+        *)             echo "Unsupported architecture: $ARCH"; exit 1 ;;
+    esac
+
+    echo "Building for $TARGET"
+"#;
+        let jf = parse(input).unwrap();
+        assert_eq!(jf.recipes.len(), 1);
+        assert_eq!(jf.recipes[0].name, "run-linux");
+        assert_eq!(
+            jf.recipes[0].shebang,
+            Some("#!/usr/bin/env bash".to_string())
+        );
+        // Should have parsed all the body lines (set -e, mkdir, ARCH=, case, esac, echo)
+        assert!(jf.recipes[0].body.len() >= 6);
+    }
+
+    #[test]
+    fn test_shebang_detection() {
+        let input = r#"
+build:
+    #!/bin/sh
+    echo "hello"
+"#;
+        let jf = parse(input).unwrap();
+        assert_eq!(jf.recipes[0].shebang, Some("#!/bin/sh".to_string()));
+        assert_eq!(jf.recipes[0].body.len(), 1);
     }
 }
