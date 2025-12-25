@@ -81,7 +81,7 @@ run NAME *ARGS:
 ```
 `just` treats every argument as a single string, so quoted lists simply do not
 work. [The issue](https://github.com/casey/just/issues/208) unfortunately has
-been open since 2017.
+been open since 2017. With multiple arguments, this recipe, combined with `positional-arguments`, is the only workaround.
 
 </td>
 <td>
