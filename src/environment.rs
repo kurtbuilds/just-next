@@ -106,7 +106,7 @@ impl Environment {
         };
 
         if cargo_bin.exists() {
-            self.prepend_path(&cargo_bin);
+            self.append_path(&cargo_bin);
         }
     }
 
@@ -153,6 +153,13 @@ impl Environment {
     fn prepend_path(&mut self, dir: &Path) {
         let current_path = self.vars.get("PATH").cloned().unwrap_or_default();
         let new_path = format!("{}:{}", dir.display(), current_path);
+        self.vars.insert("PATH".to_string(), new_path);
+    }
+
+    /// Append a directory to PATH
+    fn append_path(&mut self, dir: &Path) {
+        let current_path = self.vars.get("PATH").cloned().unwrap_or_default();
+        let new_path = format!("{}:{}", current_path, dir.display());
         self.vars.insert("PATH".to_string(), new_path);
     }
 
