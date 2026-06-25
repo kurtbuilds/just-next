@@ -46,13 +46,22 @@ impl Environment {
         let dotenv_path = if let Some(p) = custom_path {
             self.working_dir.join(p)
         } else {
-            // Search order: .env.local, .env
+            // Search order: .env.local, .env. Walk up the directory tree,
+            // stopping at the first directory that contains a match.
             let candidates = [".env.local", ".env"];
-            match candidates
-                .iter()
-                .map(|p| self.working_dir.join(p))
-                .find(|p| p.exists())
-            {
+            let mut dir = Some(self.working_dir.as_path());
+            let found = loop {
+                let Some(current) = dir else { break None };
+                if let Some(p) = candidates
+                    .iter()
+                    .map(|p| current.join(p))
+                    .find(|p| p.exists())
+                {
+                    break Some(p);
+                }
+                dir = current.parent();
+            };
+            match found {
                 Some(p) => p,
                 None => return,
             }
