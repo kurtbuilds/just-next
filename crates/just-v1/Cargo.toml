@@ -1,0 +1,98 @@
+# Vendored copy of casey/just, used as the V1 engine.
+#
+# Source: https://github.com/casey/just
+# Version: 1.57.0
+# Commit: 13bf03f642f4cec7799c19f1f8f039e1cb3b095d
+# License: CC0-1.0 (public domain dedication) — see LICENSE
+#
+# src/ is upstream verbatim, with one exception: src/main.rs is removed,
+# because this crate is consumed as a library. Everything else is unmodified
+# so that resyncing is a directory copy plus a diff review. See VENDORING.md.
+
+# The package name, description, homepage, authors and version below are read
+# back by the vendored source through `env!("CARGO_PKG_*")` and surface in
+# `--version` and `--help` output. They must match upstream verbatim, or the
+# binary stops identifying itself as `just`.
+[package]
+name = "just"
+version = "1.57.0"
+authors = ["Casey Rodarmor <casey@rodarmor.com>"]
+autobins = false
+autotests = false
+description = "🤖 Just a command runner"
+edition = "2024"
+homepage = "https://github.com/casey/just"
+license = "CC0-1.0"
+repository = "https://github.com/casey/just"
+rust-version = "1.89.0"
+
+# Renamed so it can be linked alongside this workspace's own `just` library.
+# The package name stays `just` for the `env!` values above.
+[lib]
+name = "just_v1"
+path = "src/lib.rs"
+doctest = false
+
+[dependencies]
+blake3 = { version = "1.5.0", features = ["mmap", "rayon", "serde"] }
+camino = "1.0.4"
+chrono = "0.4.38"
+clap = { version = "4.0.0", features = ["derive", "env", "wrap_help"] }
+clap_complete = { version = "=4.6.7", features = ["unstable-dynamic"] }
+clap_mangen = "0.3.0"
+digest-io = "0.1.0"
+dirs = "6.0.0"
+dotenvy = "0.15.0"
+heck = "0.5.0"
+hex = "0.4.3"
+is_executable = "1.0.4"
+libc = "0.2.0"
+nu-ansi-term = "0.50.3"
+num_cpus = "1.15.0"
+percent-encoding = "2.3.1"
+pulldown-cmark = { version = "0.13.4", default-features = false }
+rand = "0.10.0"
+regex = "1.10.4"
+semver = "1.0.20"
+serde = { version = "1.0.130", features = ["derive", "rc"] }
+serde_json = "1.0.68"
+sha2 = "0.11.0"
+shellexpand = "3.1.0"
+similar = { version = "3.0.0", features = ["unicode"] }
+snafu = "0.9.0"
+strsim = "0.11.1"
+strum = { version = "0.28.0", features = ["derive"] }
+tempfile = "3.0.0"
+typed-arena = "2.0.1"
+unicode-width = "0.2.0"
+uuid = { version = "1.0.0", features = ["v4"] }
+
+[target.'cfg(unix)'.dependencies]
+nix = { version = "0.31.0", features = ["signal", "user", "fs"] }
+
+[target.'cfg(windows)'.dependencies]
+ctrlc = { version = "3.1.1", features = ["termination"] }
+
+[lints.rust]
+mismatched_lifetime_syntaxes = "allow"
+unexpected_cfgs = "deny"
+unreachable_pub = "deny"
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+arbitrary_source_item_ordering = "deny"
+enum_glob_use = "allow"
+format-push-string = "allow"
+ignore_without_reason = "allow"
+needless_pass_by_value = "allow"
+pedantic = { level = "deny", priority = -1 }
+self_named_constructors = "allow"
+similar_names = "allow"
+struct_excessive_bools = "allow"
+struct_field_names = "allow"
+too_many_arguments = "allow"
+too_many_lines = "allow"
+type_complexity = "allow"
+undocumented_unsafe_blocks = "deny"
+unnecessary_wraps = "allow"
+wildcard_imports = "allow"

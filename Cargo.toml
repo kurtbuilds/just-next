@@ -1,16 +1,62 @@
+[workspace]
+members = [".", "crates/*"]
+
+# The package is `just-next`, but the library and binary it produces are both
+# named `just`: the binary so it drops in on `PATH`, the library so the vendored
+# upstream test suite compiles against it unmodified.
 [package]
 name = "just-next"
-version = "0.1.0"
-edition = "2021"
-description = "A modern reimplementation of the just command runner"
+# Tracks the upstream just release this is compatible with. The binary reports
+# this from `--version` and `just_version()`, so scripts and `set
+# minimum-version` see the just they are actually running against.
+version = "1.57.0"
+# 2024, to match upstream: the vendored test suite uses let chains.
+edition = "2024"
+description = "A drop-in just, with the ergonomic issues fixed"
 license = "MIT"
+autotests = false
 
 [[bin]]
-name = "just-next"
+name = "just"
 path = "src/main.rs"
 
+[lib]
+name = "just"
+path = "src/lib.rs"
+doctest = false
+
 [dependencies]
-clap = { version = "4.5", features = ["derive"] }
+# Vendored upstream just. Its lib target is named `just_v1`, so that is the
+# name it is imported under.
+just = { path = "crates/just-v1" }
+clap = { version = "4.6", features = ["derive"] }
+clap_complete = { version = "=4.6.7", features = ["unstable-dynamic"] }
 miette = { version = "7", features = ["fancy"] }
 thiserror = "1.0"
-which = "7"
+
+# The vendored suite lives in a different package than upstream's did, so
+# crates it reached for as ordinary dependencies must be dev-dependencies here.
+# Versions match upstream's manifest.
+[dev-dependencies]
+dirs = "6.0.0"
+num_cpus = "1.15.0"
+pretty_assertions = "1.0.0"
+pulldown-cmark = { version = "0.13.4", default-features = false }
+regex = "1.10.4"
+serde = { version = "1.0.130", features = ["derive", "rc"] }
+serde_json = "1.0.68"
+tempfile = "3.0.0"
+which = "8.0.0"
+
+[target.'cfg(unix)'.dev-dependencies]
+nix = { version = "0.31.0", features = ["signal", "user", "fs"] }
+
+# Upstream just's suite, vendored verbatim. See tests/integration/README.md.
+[[test]]
+name = "integration"
+path = "tests/integration/lib.rs"
+
+# just-next's own tests, covering the features the README calls out.
+[[test]]
+name = "next"
+path = "tests/next/lib.rs"

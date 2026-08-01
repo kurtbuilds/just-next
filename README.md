@@ -1,10 +1,21 @@
 # just-next
 
-A modern reimplementation of [just](https://github.com/casey/just), the command runner. `just-next` keeps the core simplicity of `just` while fixing long-standing ergonomic issues and adding automatic environment setup.
+A drop-in replacement for [just](https://github.com/casey/just), the command
+runner. `just-next` keeps the core simplicity of `just` while fixing
+long-standing ergonomic issues and adding automatic environment setup.
+
+It installs a binary called `just`, and it is a real drop-in: upstream `just`
+1.57.0 is vendored in and runs existing justfiles in-process, so they behave
+exactly as before — same output, same error messages, same exit codes. There is
+no second binary to keep on your `PATH`. Upstream's own test suite, all ~1,830
+tests of it, runs against this binary in CI.
 
 # Installation
 
   cargo install --git https://github.com/kurtbuilds/just-next.git
+
+This installs a binary named `just`. If you already have upstream `just`
+installed, make sure this one comes first on your `PATH`.
 
 ## Why?
 
@@ -130,16 +141,16 @@ Exports persist to subsequent commands.
 Prefix a recipe with a path to run it from another folder's justfile:
 
 ```bash
-just-next api/build          # runs `build` from api/justfile
-just-next crates/web/serve   # nested paths work too
-just-next api/               # runs api/justfile's first recipe
-just-next -l api/            # lists api/justfile's recipes
+just api/build          # runs `build` from api/justfile
+just crates/web/serve   # nested paths work too
+just api/               # runs api/justfile's first recipe
+just -l api/            # lists api/justfile's recipes
 ```
 
 The recipe runs with `api/` as its working directory, so relative paths, `.env`
 files, and virtualenv detection all resolve against that folder—exactly as if you
 had `cd`'d there first. Unlike the normal justfile search, the path is used as
-given: `just-next api/build` looks only in `api/`, never in its parents.
+given: `just api/build` looks only in `api/`, never in its parents.
 
 ## Automatic Environment Setup
 
@@ -159,43 +170,71 @@ set venv = "path/to/venv/"
 set dotenv = ".env.production"
 ```
 
-`just-next` maintains full backwards compatibility—it automatically detects legacy justfiles and delegates to the original `just` binary.
-
 ## Settings
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `set next` | false | Force next-style parsing (disable legacy detection) |
+| `set next` | false | Force next-style parsing (disable detection) |
 | `set dotenv` | ".env" | Load `.env` files. Set to false to disable |
 | `set export` | true | Export all variables to environment |
 | `set positional-arguments` | true | Enable `$1`, `$2`, `$@` in recipes |
 | `set venv = "path"` | auto | Path to Python virtualenv |
-| `set just = "path"` | search PATH | Path to legacy `just` binary |
 
 ## Backwards Compatibility
 
-`just-next` automatically detects legacy justfiles by looking for:
+There is one binary and two engines. Upstream `just` 1.57.0 is vendored into
+this repo and called in-process, so an existing justfile runs on the real `just`
+code — not a reimplementation of it. `just-next` picks the engine per justfile,
+by looking at its syntax.
 
-- `:=` assignment syntax
-- `env_var()`, `env_var_or_default()` function calls
-- `if`/`else` expressions
-- Other just-specific syntax
+**Legacy justfiles run on upstream `just`.** These constructs select it:
 
-When legacy syntax is detected, `just-next` transparently delegates to the original `just` binary. This means you can use `just-next` as a drop-in replacement without breaking existing justfiles.
+- `:=` assignments
+- `{{ ... }}` interpolation
+- backtick command evaluation
+- attributes (`[private]`, `[group('x')]`, …)
+- `import`, `mod`, `unexport`
+- exported parameters (`recipe $FOO:`)
+- dependencies with arguments (`build: (setup "x")`)
+- settings only upstream has (`set dotenv-load`, `set windows-shell`, …)
 
-To force next-style parsing, add `set next` to your justfile:
+**Next-style justfiles run on the new engine.** These select it:
+
+- `export NAME="value"` — shell-style, with no `:=`
+- a bare `VAR=value` assignment on a recipe body line
+- `export NAME=value` inside a recipe body
+- `$PARAM` in a body, referring to one of that recipe's parameters
+
+No `set next` marker is needed for either. When a justfile has none of these
+markers — `build:` followed by `cargo build` parses identically under both — it
+runs on upstream `just`, so a plain justfile behaves exactly as it always has.
+Add `set next` to opt such a file into the new engine and its automatic
+environment setup.
+
+Two escape hatches override detection entirely: `--legacy` forces upstream's
+engine, `--next` forces the new one.
+
+### Ambiguity
+
+Some justfiles cannot be told apart, because the two dialects genuinely overlap.
+The clearest case is a recipe that relies on `just`'s per-line shell isolation:
 
 ```just
-set next
-
-build:
-    cargo build
+foo:
+  y=bye
+  echo $y   # `y` is undefined here under just
 ```
+
+That is character-for-character the next-style idiom, so it is read as
+next-style and `y` *is* defined on the second line. If you have a justfile that
+depends on the old behaviour, run it with `--legacy` or give it a `:=`
+assignment. This is the one place where detection changes the meaning of an
+existing file, and it is inherent to detecting by syntax rather than by a marker.
 
 ## Command Line Usage
 
 ```
-just-next [OPTIONS] [<FOLDER>/][RECIPE] [ARGS...]
+just [OPTIONS] [<FOLDER>/][RECIPE] [ARGS...]
 
 Options:
   -n, --dry-run              Print commands without executing
@@ -203,7 +242,25 @@ Options:
   -l, --list                 List available recipes
   -f, --justfile <PATH>      Use specific justfile
   -d, --working-directory    Set working directory
+      --legacy               Force the upstream `just` engine
+      --next                 Force the next-style engine
 ```
+
+Legacy justfiles get upstream's full command line — `--dump`, `--fmt`,
+`--evaluate`, `--json`, `--completions` and the rest all work as they do in
+`just`, because they *are* `just`. The flags above are what the next-style
+engine currently supports.
+
+## Development
+
+```sh
+cargo test                      # everything
+cargo test --test integration   # upstream just's suite, run against this binary
+cargo test --test next          # just-next's own features
+```
+
+`tests/integration/` is upstream's test suite, vendored. See
+[VENDORING.md](VENDORING.md) for how the upstream copy is kept in sync.
 
 ## Example
 
