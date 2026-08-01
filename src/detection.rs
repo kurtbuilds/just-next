@@ -60,8 +60,11 @@ pub fn detect_style(content: &str) -> JustfileStyle {
 }
 
 /// Execute the original just binary, replacing this process
-pub fn exec_legacy_just(just_path: Option<&str>) -> ! {
-    let args: Vec<String> = std::env::args().skip(1).collect();
+///
+/// `args` overrides the arguments forwarded to `just`. When `None`, our own
+/// arguments are passed through verbatim.
+pub fn exec_legacy_just(just_path: Option<&str>, args: Option<Vec<String>>) -> ! {
+    let args: Vec<String> = args.unwrap_or_else(|| std::env::args().skip(1).collect());
 
     let just_binary = if let Some(path) = just_path {
         path.to_string()

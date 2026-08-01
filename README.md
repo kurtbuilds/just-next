@@ -125,6 +125,22 @@ Exports persist to subsequent commands.
 </tr>
 </table>
 
+## Running Recipes in Another Folder
+
+Prefix a recipe with a path to run it from another folder's justfile:
+
+```bash
+just-next api/build          # runs `build` from api/justfile
+just-next crates/web/serve   # nested paths work too
+just-next api/               # runs api/justfile's first recipe
+just-next -l api/            # lists api/justfile's recipes
+```
+
+The recipe runs with `api/` as its working directory, so relative paths, `.env`
+files, and virtualenv detection all resolve against that folder—exactly as if you
+had `cd`'d there first. Unlike the normal justfile search, the path is used as
+given: `just-next api/build` looks only in `api/`, never in its parents.
+
 ## Automatic Environment Setup
 
 `just-next` automatically configures your environment, similar to [mise](https://mise.jdx.dev/):
@@ -179,7 +195,7 @@ build:
 ## Command Line Usage
 
 ```
-just-next [OPTIONS] [RECIPE] [ARGS...]
+just-next [OPTIONS] [<FOLDER>/][RECIPE] [ARGS...]
 
 Options:
   -n, --dry-run              Print commands without executing

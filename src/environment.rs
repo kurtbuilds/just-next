@@ -12,10 +12,22 @@ pub struct Environment {
 impl Environment {
     /// Create a new environment from the current process environment
     pub fn new(working_dir: PathBuf) -> Self {
-        Self {
-            vars: std::env::vars().collect(),
-            working_dir,
-        }
+        // Make the directory absolute without resolving symlinks, so $PWD reads
+        // the way the user would write it
+        let working_dir = if working_dir.is_absolute() {
+            working_dir
+        } else {
+            std::env::current_dir()
+                .map(|cwd| cwd.join(&working_dir))
+                .unwrap_or(working_dir)
+        };
+
+        let mut vars: HashMap<String, String> = std::env::vars().collect();
+        // Recipes run in the justfile's directory, which may differ from the
+        // directory we were invoked from, so $PWD must follow it.
+        vars.insert("PWD".to_string(), working_dir.display().to_string());
+        vars.remove("OLDPWD");
+        Self { vars, working_dir }
     }
 
     /// Set up the environment based on justfile settings

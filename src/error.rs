@@ -28,6 +28,10 @@ pub enum Error {
     #[diagnostic(code(just::no_justfile))]
     NoJustfile,
 
+    #[error("No justfile found in {0}")]
+    #[diagnostic(code(just::no_justfile_in_dir))]
+    NoJustfileInDir(PathBuf),
+
     #[error("Failed to read {path}: {source}")]
     #[diagnostic(code(just::read_failed))]
     ReadFailed {
