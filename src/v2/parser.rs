@@ -306,14 +306,13 @@ impl<'a> Parser<'a> {
             }
 
             // Parse the line
-            let parsed_line = self.parse_recipe_line(content);
-            lines.push(parsed_line);
+            lines.extend(self.parse_recipe_line(content));
         }
 
         Ok((lines, shebang))
     }
 
-    fn parse_recipe_line(&self, content: &str) -> Line {
+    fn parse_recipe_line(&self, content: &str) -> Vec<Line> {
         // Check for @ or - prefixes first
         let (quiet, content) = if content.starts_with('@') {
             (true, content[1..].trim_start())
@@ -329,43 +328,115 @@ impl<'a> Parser<'a> {
 
         // Check for export VAR=value
         if let Some(rest) = content.strip_prefix("export ") {
-            if let Some((name, value)) = rest.split_once('=') {
-                return Line::Export {
-                    name: name.trim().to_string(),
-                    value: value.to_string(),
-                };
+            let (assignments, remainder) = split_leading_assignments(rest);
+            if !assignments.is_empty() && remainder.is_empty() {
+                return assignments
+                    .into_iter()
+                    .map(|(name, value)| Line::Export { name, value })
+                    .collect();
             }
         }
 
-        // Check for VAR=value (but not VAR==something or commands with = in them)
-        // This is tricky - we want FOO=bar but not echo foo=bar
-        // Heuristic: if it starts with IDENTIFIER= and no spaces before =, it's an assignment
-        if let Some(eq_pos) = content.find('=') {
-            let before_eq = &content[..eq_pos];
-            // Check if it's a valid variable name (no spaces, starts with letter/_)
-            if !before_eq.contains(' ')
-                && !before_eq.is_empty()
-                && (before_eq.chars().next().unwrap().is_alphabetic()
-                    || before_eq.starts_with('_'))
-                && before_eq.chars().all(|c| c.is_alphanumeric() || c == '_')
-            {
-                // Check it's not == (comparison)
-                if !content[eq_pos..].starts_with("==") {
-                    return Line::Assignment {
-                        name: before_eq.to_string(),
-                        value: content[eq_pos + 1..].to_string(),
-                    };
-                }
-            }
+        // A line of nothing but `VAR=value` words assigns them, and they persist
+        // to later lines. Anything after them makes it an ordinary command with
+        // an environment prefix — `FOO=bar cmd` scopes FOO to cmd, as in a
+        // shell. Taking it as an assignment instead would swallow the command:
+        // its value would be evaluated for its output, so the command's stderr
+        // and exit status would go with it.
+        let (assignments, remainder) = split_leading_assignments(content);
+        if !assignments.is_empty() && remainder.is_empty() {
+            return assignments
+                .into_iter()
+                .map(|(name, value)| Line::Assignment { name, value })
+                .collect();
         }
 
         // Regular command
-        Line::Command(Command {
+        vec![Line::Command(Command {
             text: content.to_string(),
             quiet,
             ignore_errors,
-        })
+        })]
     }
+}
+
+/// Split the leading run of `NAME=VALUE` shell words off a line, returning them
+/// and whatever text follows.
+///
+/// Values are kept verbatim, quotes and all, because the executor hands them
+/// back to the shell to evaluate. Words are split on unquoted whitespace, so a
+/// value may contain spaces when they are quoted (`BAR="x y"`) or inside a
+/// command substitution (`BAR=$(echo x y)`).
+pub fn split_leading_assignments(content: &str) -> (Vec<(String, String)>, &str) {
+    let mut assignments = Vec::new();
+    let mut rest = content.trim_start();
+
+    while let Some((word, tail)) = next_word(rest) {
+        let Some((name, value)) = word.split_once('=') else {
+            break;
+        };
+        // `==` is a comparison, not an assignment.
+        if !is_identifier(name) || value.starts_with('=') {
+            break;
+        }
+        assignments.push((name.to_string(), value.to_string()));
+        rest = tail;
+    }
+
+    (assignments, rest)
+}
+
+/// The next shell word in `s` and the text after it, or `None` if `s` is blank.
+///
+/// Quoting only has to be tracked well enough to know where the word ends:
+/// unquoted whitespace separates words, and everything else is passed through
+/// for the shell to interpret.
+fn next_word(s: &str) -> Option<(&str, &str)> {
+    let s = s.trim_start();
+    if s.is_empty() {
+        return None;
+    }
+
+    let bytes = s.as_bytes();
+    let mut depth = 0usize;
+    let mut quote = None;
+    let mut i = 0;
+
+    while i < bytes.len() {
+        let c = bytes[i];
+        match quote {
+            Some(q) => {
+                // A backslash escapes the next byte, but only inside double
+                // quotes; single quotes are literal all the way through.
+                if q == b'"' && c == b'\\' {
+                    i += 1;
+                } else if c == q {
+                    quote = None;
+                }
+            }
+            None => match c {
+                b'\\' => i += 1,
+                b'\'' | b'"' | b'`' => quote = Some(c),
+                b'(' if i > 0 && bytes[i - 1] == b'$' => depth += 1,
+                b'{' if i > 0 && bytes[i - 1] == b'$' => depth += 1,
+                b')' | b'}' if depth > 0 => depth -= 1,
+                _ if depth == 0 && c.is_ascii_whitespace() => break,
+                _ => {}
+            },
+        }
+        i += 1;
+    }
+
+    let end = i.min(s.len());
+    Some((&s[..end], &s[end..]))
+}
+
+fn is_identifier(name: &str) -> bool {
+    let mut chars = name.chars();
+    chars
+        .next()
+        .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+        && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
 fn parse_quoted_value(s: &str) -> String {

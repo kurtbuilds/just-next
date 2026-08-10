@@ -28,7 +28,7 @@
 //! the V2 signal set is narrow, and anything unreadable or unlocatable falls
 //! back to V1.
 
-use crate::search;
+use crate::{search, v2::parser::split_leading_assignments};
 use std::{
     ffi::OsStr,
     path::{Path, PathBuf},
@@ -449,15 +449,19 @@ fn body_is_v2(line: &str, params: &[String]) -> bool {
     // `FOO=$(echo bar)` as a whole line — a V2 assignment that persists to
     // later lines. Under V1 it is a shell assignment discarded immediately.
     //
-    // The whole line must be the assignment. `x=1 && echo $x` is a compound
-    // shell command that works the same under either dialect, so it is not
+    // The whole line must be assignments and nothing else. `FOO=bar cmd` is a
+    // command with an environment prefix, and `x=1 && echo $x` is a compound
+    // shell command; both mean the same under either dialect, so neither is
     // evidence of anything.
-    if let Some((name, value)) = line.split_once('=') {
-        let compound = value.contains("&&")
-            || value.contains("||")
-            || value.contains(';')
-            || value.contains('|');
-        if is_identifier(name) && !value.starts_with('=') && !compound {
+    let (assignments, remainder) = split_leading_assignments(line);
+    if !assignments.is_empty() && remainder.is_empty() {
+        let compound = assignments.iter().any(|(_, value)| {
+            value.contains("&&")
+                || value.contains("||")
+                || value.contains(';')
+                || value.contains('|')
+        });
+        if !compound {
             return true;
         }
     }
@@ -616,6 +620,18 @@ mod tests {
     #[test]
     fn recipe_body_assignment_is_v2() {
         assert_engine("build:\n    FOO=$(echo bar)\n    echo $FOO\n", Engine::V2);
+    }
+
+    #[test]
+    fn several_assignments_on_one_line_are_v2() {
+        assert_engine("build:\n    ONE=1 TWO=2\n    echo $ONE$TWO\n", Engine::V2);
+    }
+
+    #[test]
+    fn an_environment_prefix_is_not_a_v2_signal() {
+        // `FOO=bar cmd` scopes FOO to cmd under both dialects, so it says
+        // nothing about which one the author meant.
+        assert_engine("build:\n    FOO=bar cargo build\n", AMBIGUOUS_DEFAULT);
     }
 
     #[test]

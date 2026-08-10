@@ -91,6 +91,101 @@ fn assignments_reach_child_processes() {
 }
 
 #[test]
+fn a_value_may_contain_spaces_when_quoted() {
+    Test::new()
+        .justfile(
+            r#"
+            build:
+                BAR="x/src y/src"
+                sh -c 'echo $BAR'
+            "#,
+        )
+        .stdout("x/src y/src\n");
+}
+
+#[test]
+fn a_command_substitution_may_contain_spaces() {
+    Test::new()
+        .justfile(
+            r#"
+            build:
+                FOO=$(echo a b)
+                echo $FOO
+            "#,
+        )
+        .stdout("a b\n");
+}
+
+#[test]
+fn several_assignments_on_one_line_all_persist() {
+    Test::new()
+        .justfile(
+            r#"
+            build:
+                ONE=1 TWO="a b"
+                echo $ONE
+                sh -c 'echo $TWO'
+            "#,
+        )
+        .stdout("1\na b\n");
+}
+
+/// A line with a command after the assignments is a command with an environment
+/// prefix, not an assignment. Taking it as one swallowed the command whole: its
+/// value was evaluated for its output, so stdout became the assigned value and
+/// stderr and the exit status were discarded.
+#[test]
+fn an_environment_prefix_runs_the_command() {
+    Test::new()
+        .justfile(
+            r#"
+            build:
+                FOO=bar ONE="a b" sh -c 'echo "$FOO $ONE"'
+            "#,
+        )
+        .stdout("bar a b\n");
+}
+
+#[test]
+fn an_environment_prefix_does_not_persist() {
+    // Shell scoping: FOO is set for that command only.
+    Test::new()
+        .justfile(
+            r#"
+            build:
+                FOO=bar true
+                echo "[${FOO:-unset}]"
+            "#,
+        )
+        .stdout("[unset]\n");
+}
+
+#[test]
+fn an_environment_prefix_fails_the_recipe() {
+    Test::new()
+        .justfile(
+            r#"
+            build:
+                FOO=bar false
+                echo unreachable
+            "#,
+        )
+        .fails_with("");
+}
+
+#[test]
+fn an_environment_prefix_leaves_stderr_alone() {
+    Test::new()
+        .justfile(
+            r#"
+            build:
+                FOO=bar sh -c 'echo complaint >&2; exit 1'
+            "#,
+        )
+        .fails_with("complaint");
+}
+
+#[test]
 fn shebang_recipes_still_run_as_one_script() {
     // Shebang recipes keep their existing meaning: the whole body is one script.
     Test::new()
