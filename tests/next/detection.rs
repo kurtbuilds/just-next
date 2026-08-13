@@ -218,3 +218,52 @@ fn v1_justfiles_keep_upstream_exit_codes() {
         )
         .fails_with("exit code 3");
 }
+
+/// The point of routing ambiguous justfiles to V2: a file with no dialect
+/// signal at all — every recipe a bare command — still gets the automatic
+/// environment setup. Before, such a file fell back to V1 and silently ran
+/// without its `.env`.
+#[test]
+fn a_signal_free_justfile_gets_the_v2_environment() {
+    Test::new()
+        .justfile(
+            r#"
+            build:
+                echo "${VALUE:-unset}"
+            "#,
+        )
+        .write(".env", "VALUE=from-dotenv\n")
+        .stdout("from-dotenv\n");
+}
+
+/// The engine choice for an ambiguous file also depends on the invocation, not
+/// only on the justfile: V2 implements a handful of flags, so anything outside
+/// them has to reach V1 or it would die on "unexpected argument".
+#[test]
+fn a_v1_only_flag_routes_an_ambiguous_justfile_to_v1() {
+    Test::new()
+        .justfile(
+            r#"
+            build:
+                echo hi
+            "#,
+        )
+        .arg("--dump")
+        .stdout("build:\n    echo hi\n");
+}
+
+/// The flags V2 does implement leave it in charge, so they keep the automatic
+/// environment setup.
+#[test]
+fn a_v2_flag_keeps_an_ambiguous_justfile_on_v2() {
+    Test::new()
+        .justfile(
+            r#"
+            build:
+                echo "${VALUE:-unset}"
+            "#,
+        )
+        .write(".env", "VALUE=from-dotenv\n")
+        .arg("--dry-run")
+        .stdout("");
+}

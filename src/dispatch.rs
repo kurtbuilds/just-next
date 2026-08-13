@@ -18,15 +18,23 @@
 //!    with `foo := "bar"` is legacy even if a recipe body happens to contain a
 //!    line that looks like a V2 assignment.
 //! 3. Any **V2 signal** — V2.
-//! 4. Otherwise — [`AMBIGUOUS_DEFAULT`].
+//! 4. Otherwise — [`AMBIGUOUS_DEFAULT`], unless the invocation itself needs V1;
+//!    see [`v2_serves`].
 //!
-//! # Why V1 signals are conservative
+//! # Why V1 signals are broad
 //!
-//! Detection is failure-asymmetric. Misrouting a V1 justfile to V2 breaks a
-//! working justfile; misrouting an ambiguous file to V1 merely forgoes
-//! just-next's automatic environment setup. So the V1 signal set is broad and
-//! the V2 signal set is narrow, and anything unreadable or unlocatable falls
-//! back to V1.
+//! An ambiguous file parses the same either way, so the engine choice is not
+//! about parsing it correctly — it is about which automatic setup it gets.
+//! Withholding that from a file that would have been happy with it is the
+//! failure that actually bites: `.env` silently does not load, and the recipe
+//! fails somewhere far downstream with no mention of the environment. So
+//! ambiguous files go to V2, and the burden falls on the V1 signal set to be
+//! broad enough to catch every genuinely legacy file before it gets there.
+//!
+//! A file that cannot be read or located still routes to V1, so that
+//! `just --version`, `just --init`, completions, and every error message stay
+//! byte-identical to upstream. That is not ambiguity — it is having nothing to
+//! judge.
 
 use crate::{search, v2::parser::split_leading_assignments};
 use std::{
@@ -45,10 +53,12 @@ pub enum Engine {
 
 /// Engine for justfiles that parse identically under both dialects.
 ///
-/// V1, so that a plain justfile behaves exactly as it does under upstream
-/// `just`. The cost is that such a file does not get just-next's automatic
-/// `.env` / `PATH` / virtualenv setup without a V2 signal or `set next`.
-pub const AMBIGUOUS_DEFAULT: Engine = Engine::V1;
+/// V2, so that a plain justfile — every recipe a bare command, nothing that
+/// names a dialect — gets just-next's automatic `.env` / `PATH` / virtualenv
+/// setup. Such a file runs the same under either engine, so the setup is the
+/// whole of the difference, and a justfile has to opt out of it via a V1 signal
+/// or `--legacy` rather than opt in.
+pub const AMBIGUOUS_DEFAULT: Engine = Engine::V2;
 
 /// Decide which engine should parse `content`.
 pub fn detect(content: &str) -> Engine {
@@ -93,7 +103,19 @@ pub fn detect_with(content: &str, ambiguous: Engine) -> Engine {
 
             // Comments in a body are shell comments; they say nothing about
             // which dialect the justfile is written in.
-            if shebang_recipe || line.starts_with('#') {
+            if line.starts_with('#') {
+                continue;
+            }
+
+            if body_is_v1(line) {
+                return Engine::V1;
+            }
+
+            // Shebang recipes already run as a single script under V1, so the
+            // gotchas V2's body signals look for do not apply to them. The V1
+            // check above still does: V1 interpolates a shebang body like any
+            // other.
+            if shebang_recipe {
                 continue;
             }
 
@@ -192,9 +214,73 @@ pub fn route(args: &[impl AsRef<OsStr>]) -> Route {
     };
 
     let forced_next = args.iter().any(|arg| *arg == OsStr::new("--next"));
-    let engine = if forced_next { Engine::V2 } else { detect(&content) };
+    // An ambiguous justfile parses the same either way, so it can go to V2 for
+    // the automatic setup — but only if V2 can serve the *invocation*. V2
+    // implements a handful of flags; upstream implements dozens. `just --fmt`
+    // on a justfile too plain to signal a dialect is still a V1 job.
+    let ambiguous = if v2_serves(&args) { AMBIGUOUS_DEFAULT } else { Engine::V1 };
+    let engine = if forced_next {
+        Engine::V2
+    } else {
+        detect_with(&content, ambiguous)
+    };
 
     Route { engine, justfile: Some(justfile) }
+}
+
+/// Long flags the V2 CLI implements, minus `--help` and `--version`, whose
+/// output has to stay upstream's.
+const V2_LONG_FLAGS: &[&str] = &[
+    "--dry-run",
+    "--quiet",
+    "--justfile",
+    "--working-directory",
+    "--list",
+    "--next",
+    "--legacy",
+];
+
+/// Short flags the V2 CLI implements, as the letters that may appear in a
+/// cluster like `-nq`.
+const V2_SHORT_FLAGS: &str = "nqfdl";
+
+/// Whether the V2 engine can serve this invocation at all.
+///
+/// Only consulted for ambiguous justfiles. V2's argument parser is small, so an
+/// invocation using anything outside it — `--fmt`, `--dump`, `--summary`,
+/// `--choose`, `--shell`, `--evaluate`, `--completions` — would die on
+/// "unexpected argument" where upstream would have done the job. Unrecognised
+/// arguments therefore mean V1: the cost is one justfile forgoing automatic
+/// setup, against a flag that would otherwise stop working entirely.
+fn v2_serves(args: &[&OsStr]) -> bool {
+    for arg in args.iter().skip(1) {
+        let Some(arg) = arg.to_str() else {
+            return false;
+        };
+
+        // A bare `--` ends the flags; the rest is the recipe and its arguments.
+        if arg == "--" {
+            return true;
+        }
+
+        if let Some(long) = arg.strip_prefix("--") {
+            // `--justfile=x` and `--justfile x` are the same flag.
+            let name = long.split_once('=').map_or(long, |(name, _)| name);
+            if !V2_LONG_FLAGS.contains(&format!("--{name}").as_str()) {
+                return false;
+            }
+        } else if let Some(shorts) = arg.strip_prefix('-') {
+            // A lone `-` is a positional argument, not a flag.
+            if shorts.is_empty() {
+                continue;
+            }
+            if !shorts.chars().all(|c| V2_SHORT_FLAGS.contains(c)) {
+                return false;
+            }
+        }
+    }
+
+    true
 }
 
 /// Find the justfile this command line refers to.
@@ -417,6 +503,33 @@ const V1_ONLY_SETTINGS: &[&str] = &[
 ];
 
 /// Constructs at the top level that are legal in V2 and not in V1.
+/// V1-only constructs a *recipe body* can hold.
+///
+/// [`top_level_is_v1`] claims both of these too, but it only ever sees
+/// unindented lines. A body needs its own check because V1 rewrites these lines
+/// before the shell sees them and V2 does not: `echo {{env_var("HOME")}}` prints
+/// the home directory under V1 and the literal braces under V2.
+///
+/// Only the two constructs whose V1 meaning survives being handed to a shell
+/// verbatim, so that they read as ordinary commands rather than as errors —
+/// those are the ones that would otherwise misroute in silence.
+fn body_is_v1(line: &str) -> bool {
+    // `{{ ... }}` interpolation. V2 uses shell `$VAR`.
+    if line.contains("{{") {
+        return true;
+    }
+
+    // Backtick command evaluation, which V1 performs itself at parse time. A
+    // shell would also substitute these, so the line runs either way — but it
+    // runs at a different time, in a different directory, with a different
+    // environment.
+    if line.contains('`') {
+        return true;
+    }
+
+    false
+}
+
 fn top_level_is_v2(line: &str) -> bool {
     // `export NAME="value"` — V1 requires `export NAME := "value"`, and the
     // `:=` check above has already claimed that form for V1.
@@ -709,5 +822,66 @@ mod tests {
         assert_eq!(recipe_header_params("build:"), Some(vec![]));
         assert_eq!(recipe_header_params("    echo hi"), None);
         assert_eq!(recipe_header_params("export FOO=bar"), None);
+    }
+
+    #[test]
+    fn interpolation_in_a_shebang_body_is_v1() {
+        // Shebang bodies are exempt from the V2 *signals*, because those look
+        // for line-by-line gotchas that a single script does not have. V1
+        // signals still apply: V1 interpolates a shebang body like any other,
+        // and V2 would leave the braces in the script verbatim.
+        assert_engine(
+            "build:\n    #!/bin/sh\n    echo {{env_var(\"HOME\")}}\n",
+            Engine::V1,
+        );
+    }
+
+    #[track_caller]
+    fn assert_serves(args: &[&str], expected: bool) {
+        let args: Vec<&OsStr> = args.iter().map(OsStr::new).collect();
+        assert_eq!(v2_serves(&args), expected, "args: {args:?}");
+    }
+
+    #[test]
+    fn an_ordinary_recipe_run_is_served_by_v2() {
+        assert_serves(&["just"], true);
+        assert_serves(&["just", "build"], true);
+        assert_serves(&["just", "deploy", "admin"], true);
+    }
+
+    #[test]
+    fn v2s_own_flags_are_served_by_v2() {
+        assert_serves(&["just", "--list"], true);
+        assert_serves(&["just", "--dry-run", "build"], true);
+        assert_serves(&["just", "--justfile", "other", "build"], true);
+        assert_serves(&["just", "--justfile=other", "build"], true);
+        assert_serves(&["just", "-nq", "build"], true);
+    }
+
+    #[test]
+    fn v1_only_flags_are_not_served_by_v2() {
+        // The whole upstream CLI surface V2 never implemented. Routing these to
+        // V2 would answer "unexpected argument" where upstream does the job.
+        assert_serves(&["just", "--fmt"], false);
+        assert_serves(&["just", "--dump"], false);
+        assert_serves(&["just", "--summary"], false);
+        assert_serves(&["just", "--choose"], false);
+        assert_serves(&["just", "--shell", "bash", "build"], false);
+        assert_serves(&["just", "--color=auto", "build"], false);
+        assert_serves(&["just", "-s", "build"], false);
+
+        // `--help` and `--version` print text that has to stay upstream's.
+        assert_serves(&["just", "--help"], false);
+        assert_serves(&["just", "--version"], false);
+    }
+
+    #[test]
+    fn arguments_after_a_double_dash_are_not_flags() {
+        // `just run -- --fmt` passes `--fmt` to the recipe; it is not a request
+        // for upstream's formatter.
+        assert_serves(&["just", "run", "--", "--fmt"], true);
+
+        // A lone `-` is a positional argument.
+        assert_serves(&["just", "run", "-"], true);
     }
 }

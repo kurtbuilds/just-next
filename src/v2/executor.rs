@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use std::io::IsTerminal;
 use std::process::{Command, Stdio};
 
 use crate::v2::ast::*;
@@ -8,6 +9,19 @@ use crate::v2::error::{Error, Result};
 /// ANSI escape codes for bold text
 const BOLD: &str = "\x1b[1m";
 const RESET: &str = "\x1b[0m";
+
+/// Echo a line to stderr, bold when a terminal is there to render it.
+///
+/// Redirected stderr is being read by something that wants the text — a log
+/// file, a `2>&1 | grep`, a test harness comparing it byte for byte. Bolding
+/// unconditionally writes `\x1b[1m` into all of them.
+fn echo(line: &str) {
+    if std::io::stderr().is_terminal() {
+        eprintln!("{BOLD}{line}{RESET}");
+    } else {
+        eprintln!("{line}");
+    }
+}
 
 pub struct Executor<'a> {
     justfile: &'a Justfile,
@@ -39,7 +53,8 @@ impl<'a> Executor<'a> {
     /// Run a recipe by name with given arguments
     pub fn run(&self, recipe_name: &str, args: &[String]) -> Result<()> {
         let mut visited = HashSet::new();
-        self.run_recipe_with_deps(recipe_name, args, &mut visited)
+        let mut ran = HashSet::new();
+        self.run_recipe_with_deps(recipe_name, args, &mut visited, &mut ran)
     }
 
     fn run_recipe_with_deps(
@@ -47,19 +62,33 @@ impl<'a> Executor<'a> {
         recipe_name: &str,
         args: &[String],
         visited: &mut HashSet<String>,
+        ran: &mut HashSet<(String, Vec<String>)>,
     ) -> Result<()> {
         // Check for circular dependencies
         if visited.contains(recipe_name) {
             return Err(Error::CircularDependency(recipe_name.to_string()));
         }
-        visited.insert(recipe_name.to_string());
 
         // Find the recipe
         let recipe = self.find_recipe(recipe_name)?;
 
+        // A recipe runs at most once per invocation for any one set of
+        // arguments, so `foo: bar bar` runs bar once and a diamond runs the
+        // shared dependency once. Keyed on the resolved name so an alias and
+        // the recipe it points at are the same run.
+        //
+        // Not just a tidiness rule: dependencies form a DAG, not a tree, so
+        // re-running a repeated one makes traversal exponential. A chain of 40
+        // `r{i}: r{i+1} r{i+1}` recipes takes 2^40 runs without this.
+        if !ran.insert((recipe.name.clone(), args.to_vec())) {
+            return Ok(());
+        }
+
+        visited.insert(recipe_name.to_string());
+
         // Run dependencies first
         for dep in &recipe.dependencies {
-            self.run_recipe_with_deps(&dep.recipe, &dep.arguments, visited)?;
+            self.run_recipe_with_deps(&dep.recipe, &dep.arguments, visited, ran)?;
         }
 
         // Bind parameters to arguments
@@ -231,14 +260,14 @@ impl<'a> Executor<'a> {
                     state.shift(n);
 
                     if !self.quiet && !cmd.quiet && !recipe_quiet {
-                        eprintln!("{}{}{}", BOLD, expanded, RESET);
+                        echo(&expanded);
                     }
                     return Ok(());
                 }
 
                 // Print the command in bold (unless quiet)
                 if !self.quiet && !cmd.quiet && !recipe_quiet {
-                    eprintln!("{}{}{}", BOLD, expanded, RESET);
+                    echo(&expanded);
                 }
 
                 if self.dry_run {
@@ -268,7 +297,7 @@ impl<'a> Executor<'a> {
                 let final_value = self.evaluate_assignment(name, value, state)?;
 
                 if !self.quiet {
-                    eprintln!("{}{}={}{}", BOLD, name, final_value, RESET);
+                    echo(&format!("{name}={final_value}"));
                 }
 
                 state.set_var(name.clone(), final_value);
@@ -277,7 +306,7 @@ impl<'a> Executor<'a> {
                 let final_value = self.evaluate_assignment(name, value, state)?;
 
                 if !self.quiet {
-                    eprintln!("{}export {}={}{}", BOLD, name, final_value, RESET);
+                    echo(&format!("export {name}={final_value}"));
                 }
 
                 state.set_var(name.clone(), final_value.clone());

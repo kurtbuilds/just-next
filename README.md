@@ -207,9 +207,11 @@ by looking at its syntax.
 
 No `set next` marker is needed for either. When a justfile has none of these
 markers — `build:` followed by `cargo build` parses identically under both — it
-runs on upstream `just`, so a plain justfile behaves exactly as it always has.
-Add `set next` to opt such a file into the new engine and its automatic
-environment setup.
+runs on the new engine, so it gets the automatic environment setup. A plain
+justfile runs the same either way, and the setup is the whole of the difference;
+withholding it would mean a justfile whose `.env` silently never loads, failing
+somewhere far downstream with no mention of the environment. Legacy files opt
+*out* by carrying one of the constructs above, not in.
 
 Two escape hatches override detection entirely: `--legacy` forces upstream's
 engine, `--next` forces the new one.
@@ -228,8 +230,13 @@ foo:
 That is character-for-character the next-style idiom, so it is read as
 next-style and `y` *is* defined on the second line. If you have a justfile that
 depends on the old behaviour, run it with `--legacy` or give it a `:=`
-assignment. This is the one place where detection changes the meaning of an
-existing file, and it is inherent to detecting by syntax rather than by a marker.
+assignment. This is the one place where detection changes the meaning of a
+*line*, and it is inherent to detecting by syntax rather than by a marker.
+
+Routing an ambiguous file to the new engine also gives it the automatic
+environment setup, which is a change in its own right: a `.env` sitting beside a
+justfile that never loaded one now loads. That is the intended effect, but it
+means a recipe can see variables it did not before. `--legacy` opts out.
 
 ## Command Line Usage
 
@@ -250,6 +257,13 @@ Legacy justfiles get upstream's full command line — `--dump`, `--fmt`,
 `--evaluate`, `--json`, `--completions` and the rest all work as they do in
 `just`, because they *are* `just`. The flags above are what the next-style
 engine currently supports.
+
+Ambiguous justfiles get them too. The engine choice for a file that could go
+either way depends on the invocation as well as the syntax: a flag outside the
+list above sends it to upstream, so `just --fmt` formats a plain justfile
+instead of failing on an unrecognised argument. Only a file that names its
+dialect — a legacy construct, `set next`, or an explicit `--legacy`/`--next` —
+ignores the command line.
 
 ## Development
 
