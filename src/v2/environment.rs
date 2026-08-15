@@ -3,6 +3,78 @@ use std::path::{Path, PathBuf};
 
 use crate::v2::ast::{Export, Settings};
 
+/// Find the `.env` file that applies to `dir`.
+///
+/// Search order is `.env.local`, then `.env`, walking up the directory tree and
+/// stopping at the first directory that holds either.
+pub fn find_dotenv(dir: &Path) -> Option<PathBuf> {
+    let candidates = [".env.local", ".env"];
+    let mut dir = Some(dir);
+    loop {
+        let current = dir?;
+        if let Some(path) = candidates
+            .iter()
+            .map(|p| current.join(p))
+            .find(|p| p.exists())
+        {
+            return Some(path);
+        }
+        dir = current.parent();
+    }
+}
+
+/// Read a `.env` file into key/value pairs, in file order. A file that cannot
+/// be read yields nothing.
+pub fn read_dotenv(path: &Path) -> Vec<(String, String)> {
+    let Ok(content) = std::fs::read_to_string(path) else {
+        return Vec::new();
+    };
+    content.lines().filter_map(parse_dotenv_line).collect()
+}
+
+/// Parse one line of a `.env` file into a key and value.
+///
+/// A line this does not understand is skipped rather than guessed at.
+fn parse_dotenv_line(line: &str) -> Option<(String, String)> {
+    let line = line.trim();
+    if line.is_empty() || line.starts_with('#') {
+        return None;
+    }
+
+    let (key, value) = line.split_once('=')?;
+
+    let key = key.trim();
+    if key.is_empty() {
+        return None;
+    }
+
+    Some((key.to_string(), parse_dotenv_value(value.trim())))
+}
+
+/// Unwrap a `.env` value: strip a matching pair of quotes, and drop any comment
+/// that follows the value.
+fn parse_dotenv_value(value: &str) -> String {
+    for quote in ['"', '\''] {
+        if let Some(rest) = value.strip_prefix(quote) {
+            // Take everything up to the closing quote; what follows it is a
+            // comment, not part of the value. An unterminated quote is left
+            // alone — better a value with a stray quote in it than one
+            // silently truncated.
+            if let Some(end) = rest.find(quote) {
+                return rest[..end].to_string();
+            }
+            return value.to_string();
+        }
+    }
+
+    // An unquoted value ends at a ` #` comment. `#` with no space before it is
+    // part of the value, so a URL fragment or a password survives.
+    match value.split_once(" #").or_else(|| value.split_once("\t#")) {
+        Some((value, _)) => value.trim_end().to_string(),
+        None => value.to_string(),
+    }
+}
+
 /// Environment for recipe execution
 pub struct Environment {
     vars: HashMap<String, String>,
@@ -55,56 +127,18 @@ impl Environment {
 
     /// Load .env file(s)
     fn load_dotenv(&mut self, custom_path: Option<&str>) {
-        let dotenv_path = if let Some(p) = custom_path {
-            self.working_dir.join(p)
-        } else {
-            // Search order: .env.local, .env. Walk up the directory tree,
-            // stopping at the first directory that contains a match.
-            let candidates = [".env.local", ".env"];
-            let mut dir = Some(self.working_dir.as_path());
-            let found = loop {
-                let Some(current) = dir else { break None };
-                if let Some(p) = candidates
-                    .iter()
-                    .map(|p| current.join(p))
-                    .find(|p| p.exists())
-                {
-                    break Some(p);
-                }
-                dir = current.parent();
-            };
-            match found {
+        let dotenv_path = match custom_path {
+            Some(p) => self.working_dir.join(p),
+            None => match find_dotenv(&self.working_dir) {
                 Some(p) => p,
                 None => return,
-            }
+            },
         };
 
-        if !dotenv_path.exists() {
-            return;
-        }
-
-        if let Ok(content) = std::fs::read_to_string(&dotenv_path) {
-            for line in content.lines() {
-                let line = line.trim();
-                if line.is_empty() || line.starts_with('#') {
-                    continue;
-                }
-
-                if let Some((key, value)) = line.split_once('=') {
-                    let key = key.trim();
-                    let value = value.trim();
-                    // Remove quotes if present
-                    let value = value
-                        .strip_prefix('"')
-                        .and_then(|v| v.strip_suffix('"'))
-                        .or_else(|| value.strip_prefix('\'').and_then(|v| v.strip_suffix('\'')))
-                        .unwrap_or(value);
-
-                    // Don't override existing env vars
-                    if !self.vars.contains_key(key) {
-                        self.vars.insert(key.to_string(), value.to_string());
-                    }
-                }
+        for (key, value) in read_dotenv(&dotenv_path) {
+            // Don't override existing env vars
+            if !self.vars.contains_key(&key) {
+                self.vars.insert(key, value);
             }
         }
     }
@@ -263,5 +297,40 @@ mod tests {
         assert_eq!(env.expand_value("${FOO}"), "bar");
         assert_eq!(env.expand_value("prefix:$PATH"), "prefix:/usr/bin");
         assert_eq!(env.expand_value("$FOO/$PATH"), "bar//usr/bin");
+    }
+
+    fn parse(line: &str) -> Option<(String, String)> {
+        parse_dotenv_line(line)
+    }
+
+    fn pair(key: &str, value: &str) -> Option<(String, String)> {
+        Some((key.to_string(), value.to_string()))
+    }
+
+    #[test]
+    fn test_parse_dotenv_line() {
+        assert_eq!(parse("URL=http://x.io"), pair("URL", "http://x.io"));
+        assert_eq!(parse("URL = http://x.io"), pair("URL", "http://x.io"));
+        assert_eq!(parse("  URL=http://x.io  "), pair("URL", "http://x.io"));
+        assert_eq!(parse("URL=\"http://x.io\""), pair("URL", "http://x.io"));
+        assert_eq!(parse("URL='http://x.io'"), pair("URL", "http://x.io"));
+
+        // Trailing comments.
+        assert_eq!(parse("URL=\"x\" # comment"), pair("URL", "x"));
+        assert_eq!(parse("URL=x # comment"), pair("URL", "x"));
+        assert_eq!(parse("URL=http://x.io/#frag"), pair("URL", "http://x.io/#frag"));
+
+        // Values that keep what looks like syntax.
+        assert_eq!(parse("URL=a=b"), pair("URL", "a=b"));
+        assert_eq!(parse("URL=\"a b\""), pair("URL", "a b"));
+        assert_eq!(parse("URL=\"unterminated"), pair("URL", "\"unterminated"));
+        assert_eq!(parse("EMPTY="), pair("EMPTY", ""));
+
+        // Not assignments.
+        assert_eq!(parse(""), None);
+        assert_eq!(parse("   "), None);
+        assert_eq!(parse("# URL=x"), None);
+        assert_eq!(parse("URL"), None);
+        assert_eq!(parse("=x"), None);
     }
 }

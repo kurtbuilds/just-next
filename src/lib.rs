@@ -13,6 +13,7 @@
 //! syntax. See that module for the rules.
 
 pub mod dispatch;
+pub mod legacy_dotenv;
 pub mod search;
 pub mod v2;
 

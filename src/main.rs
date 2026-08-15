@@ -34,8 +34,17 @@ fn main() -> ExitCode {
 
     let args: Vec<OsString> = std::env::args_os().collect();
 
-    match dispatch::route(&args).engine {
-        Engine::V1 => run_v1(args),
+    let route = dispatch::route(&args);
+
+    match route.engine {
+        Engine::V1 => {
+            // A justfile does not stop needing its `.env` for having been
+            // written in the older dialect; upstream would not load one.
+            if let Some(justfile) = &route.justfile {
+                just::legacy_dotenv::preload(justfile, &args);
+            }
+            run_v1(args)
+        }
         Engine::V2 => just::v2::cli::main(),
     }
 }

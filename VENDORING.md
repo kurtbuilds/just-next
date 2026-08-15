@@ -38,7 +38,7 @@ the relocated tests), and `[lib] doctest = false`.
 `CHANGELOG.md`, `LICENSE`, `GRAMMAR.md`, `README.md` and `examples/` are copied
 because the source `include_str!`s some of them and the test suite reads others.
 
-**`tests/integration/`** — verbatim except for four path and flag adjustments,
+**`tests/integration/`** — verbatim except for six path and flag adjustments,
 all documented inline:
 
 - `lib.rs` defines `V1_ROOT`, pointing at `crates/just-v1`.
@@ -50,6 +50,13 @@ all documented inline:
   block in upstream's README is a worked example of the per-line shell isolation
   that just-next deliberately changes, and it is character-for-character
   identical to the V2 idiom. See "Ambiguity" in `src/dispatch.rs`.
+- `dotenv.rs` passes `--legacy` in `dotenv` and `no_warning`. Both assert
+  upstream's default of ignoring a `.env` that sits beside the justfile.
+  just-next loads it — see `src/legacy_dotenv.rs` for why — so these two need
+  the escape hatch to keep asserting upstream's behaviour. This is the one
+  deliberate behavioural divergence in the V1 path; every other dotenv test
+  passes unmodified, because a justfile that configures dotenv itself, or an
+  invocation that does, is left entirely to upstream.
 
 **Root `Cargo.toml`** — the root package version tracks the upstream release
 this is compatible with, because the binary reports it. Crates upstream used as

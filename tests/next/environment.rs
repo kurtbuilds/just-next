@@ -53,12 +53,83 @@ fn dotenv_values_may_be_quoted() {
 }
 
 #[test]
+fn a_dotenv_comment_after_a_value_is_not_part_of_it() {
+    Test::new()
+        .justfile(SHOW)
+        .write(".env", "VALUE=\"from-dotenv\" # a comment\n")
+        .stdout("from-dotenv\n");
+}
+
+#[test]
+fn a_hash_inside_a_dotenv_value_is_kept() {
+    Test::new()
+        .justfile(SHOW)
+        .write(".env", "VALUE=http://example.com/#anchor\n")
+        .stdout("http://example.com/#anchor\n");
+}
+
+#[test]
 fn a_dotenv_file_is_found_in_a_parent_directory() {
     Test::new()
         .write("sub/justfile", SHOW)
         .write(".env", "VALUE=from-parent\n")
         .current_dir("sub")
         .stdout("from-parent\n");
+}
+
+/// A justfile routes to V1 as a whole, so one legacy construct in one recipe
+/// used to cost every *other* recipe its `.env`. Upstream would not load one;
+/// just-next loads it before handing over. See `src/legacy_dotenv.rs`.
+#[test]
+fn a_legacy_justfile_still_gets_its_dotenv() {
+    Test::new()
+        .justfile("legacy NAME='x':\n    @echo {{NAME}}\n\nshow:\n    @echo \"${VALUE:-unset}\"\n")
+        .write(".env", "VALUE=from-dotenv\n")
+        .arg("show")
+        .stdout("from-dotenv\n");
+}
+
+/// `--legacy` means upstream's behaviour, which includes ignoring a `.env`.
+#[test]
+fn forcing_legacy_opts_out_of_the_dotenv() {
+    Test::new()
+        .justfile("show:\n    @echo \"${VALUE:-unset}\"\n")
+        .write(".env", "VALUE=from-dotenv\n")
+        .arg("--legacy")
+        .stdout("unset\n");
+}
+
+/// A justfile that configures dotenv itself is left entirely to upstream —
+/// `set dotenv-load := false` has to keep meaning what it says.
+#[test]
+fn a_legacy_justfile_that_disables_dotenv_is_left_alone() {
+    Test::new()
+        .justfile(
+            "set dotenv-load := false\n\nshow:\n    @echo \"${VALUE:-unset}\"\n",
+        )
+        .write(".env", "VALUE=from-dotenv\n")
+        .stdout("unset\n");
+}
+
+/// Same for an invocation that configures it.
+#[test]
+fn no_dotenv_is_left_alone_in_a_legacy_justfile() {
+    Test::new()
+        .justfile("legacy NAME='x':\n    @echo {{NAME}}\n\nshow:\n    @echo \"${VALUE:-unset}\"\n")
+        .write(".env", "VALUE=from-dotenv\n")
+        .args(["--no-dotenv", "show"])
+        .stdout("unset\n");
+}
+
+/// The environment still wins, as it does on the V2 side.
+#[test]
+fn a_real_environment_variable_beats_a_legacy_dotenv() {
+    Test::new()
+        .justfile("legacy NAME='x':\n    @echo {{NAME}}\n\nshow:\n    @echo \"${VALUE:-unset}\"\n")
+        .write(".env", "VALUE=from-dotenv\n")
+        .env("VALUE", "from-environment")
+        .arg("show")
+        .stdout("from-environment\n");
 }
 
 #[test]

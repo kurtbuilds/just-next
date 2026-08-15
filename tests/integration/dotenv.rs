@@ -13,7 +13,9 @@ fn dotenv() {
         \techo KEY=${KEY:-unset}
       ",
     )
-    .args(["sub/default"])
+    // `--legacy` for just-next: this asserts upstream's default of ignoring a
+    // `.env`, which just-next changes. See VENDORING.md.
+    .args(["--legacy", "sub/default"])
     .stdout("KEY=unset\n")
     .stderr("echo KEY=${KEY:-unset}\n")
     .success();
@@ -79,6 +81,9 @@ fn no_warning() {
       ",
     )
     .write(".env", "DOTENV_KEY=dotenv-value")
+    // `--legacy` for just-next: this asserts upstream's default of ignoring a
+    // `.env`, which just-next changes. See VENDORING.md.
+    .arg("--legacy")
     .stdout("unset\n")
     .stderr("echo ${DOTENV_KEY:-unset}\n")
     .success();

@@ -216,6 +216,17 @@ somewhere far downstream with no mention of the environment. Legacy files opt
 Two escape hatches override detection entirely: `--legacy` forces upstream's
 engine, `--next` forces the new one.
 
+**`.env` files load on both engines.** Everything else in the automatic setup is
+the new engine's alone, but the `.env` is not, because routing is per *file*: one
+`{{ }}` in one recipe would otherwise cost every other recipe in the justfile its
+environment, and the failure surfaces as an empty variable in a command that has
+nothing to do with the construct that caused it. So a legacy justfile gets its
+`.env` loaded before upstream runs — the one place `just-next` departs from
+upstream's behaviour on the V1 path. A justfile that configures dotenv itself
+(`set dotenv-load`, `set dotenv-path`, …) or an invocation that does
+(`--no-dotenv`, `--dotenv-path`, …) is left entirely to upstream, as is anything
+run under `--legacy`. Existing environment variables are never overwritten.
+
 ### Ambiguity
 
 Some justfiles cannot be told apart, because the two dialects genuinely overlap.
